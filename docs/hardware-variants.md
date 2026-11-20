@@ -58,3 +58,66 @@ No ECW230v3 unit has been tested. Known differences from the other two SKUs, fro
   you are the first ECW230v3 tester, please report `/proc/mtd`, `printenv` and the u-boot banner in an issue.
 
 If it does not boot, nothing is lost: stop at the u-boot prompt and restore your backup ([guide §6](install-and-restore.md#6-go-back-to-stock-engenius-firmware)).
+
+## ECW336 (Wi-Fi 6E) — same family, and two corrections it forces
+
+The **ECW336** is the same Senao `ap-hk07` board family and has now been
+UART-brought-up and stock-flashed on three units
+([ECW336-firmware-tools](https://github.com/ParkWardRR/ECW336-firmware-tools)).
+No OpenWrt port exists for it yet, but two of its findings bear directly on the
+notes above.
+
+### 1. A FIT's default configuration does **not** identify the board
+
+The ECW230v3 note above reads `config@hk08` as a hardware difference. Treat that
+as unsafe: the ECW336's FIT **also** defaults to `config@hk08`, yet a live
+ECW336 reports `machid=8010006` (`ap-hk07`), with `soc_version_major=2`,
+`soc_version_minor=0`. More tellingly, a **known-`ap-hk07`** EWS377-FIT 1.1.65
+image defaults to `config@hk01.c4`.
+
+So `configurations/default` is a QSDK **build artifact** — whatever the vendor's
+build happened to select — not a statement about silicon. Userspace is no better:
+the ECW336 prints `Platform Name: ap-hk01-c6` while its kernel reports `AP-HK07`.
+
+**Trust `machid` and the DTB's `qcom,msm-id`/`board-id`, nothing else.** For
+reference, hk07 is `0x156 0x185`; hk08/hk06 are `0x158 0x188`.
+
+### 2. Partition labels: read them per unit, but they are not always reversed
+
+The ECW230v3 warning about reversed `rootfs`/`rootfs_1` labels is worth keeping,
+and the ECW336 shows why it must be phrased as "check, don't assume" rather than
+"ECW units are reversed". Its `smeminfo` was identical on all three units, in the
+**normal** order:
+
+| partition | offset | size |
+|---|---|---|
+| `rootfs` (FW1) | `0x1000000` | `0x6ec0000` |
+| `0:WIFIFW` (FW1) | `0x7ec0000` | `0x900000` |
+| `rootfs_1` (FW2) | `0x87c0000` | `0x6ec0000` |
+| `0:WIFIFW_1` (FW2) | `0xf680000` | `0x900000` |
+| `0:ART` | `0xf80000` | `0x80000` |
+
+Two things to carry into any port work here:
+
+- The **active slot is chosen by the u-boot env var `active_fw`** (`0` = FW1,
+  `1` = FW2) — not by a `BOOTCONFIG` partition, which does not exist on these
+  units. Resolve partitions **by name from `/proc/mtd`**, never by index; ART
+  was `mtd12` on an EWS377-FIT and `mtd11` on an EWS377AP v3.
+- Each A/B slot has its **own `WIFIFW` partition**, so a wifi-firmware write has
+  to target the inactive one too.
+
+### Hardware notes for a future port
+
+- Third radio is a **QCN9074 on PCIe** (`remoteproc1: QCN9000_PCI0 is
+  available`), in addition to the IPQ8074's on-chip radios — so a port needs the
+  QCN9074 firmware and PCIe wiring, which the EWS377AP v3 DTS has no equivalent
+  for.
+- Stock is OpenWrt **19.07**, kernel **5.4.213** — the newer-SDK generation, same
+  as ECW230v3.
+- 6 GHz works on stock and is **not** exotic regulatory territory: a 6E client
+  associated on channel 5 (6 GHz) / 80 MHz / 802.11ax / WPA3, `Country Code: US`,
+  with no AFC grant, because channel 5 is a PSC channel and Low-Power Indoor
+  suffices. 6 GHz does require WPA3-SAE or OWE — WPA2-PSK bound to the band
+  disables the radio.
+- The stock env ships `country=000`; the regulatory domain arrives from the
+  controller, so a port must set it explicitly.
