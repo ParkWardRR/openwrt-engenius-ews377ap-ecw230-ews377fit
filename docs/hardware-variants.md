@@ -61,7 +61,7 @@ If it does not boot, nothing is lost: stop at the u-boot prompt and restore your
 
 ## ECW336 (Wi-Fi 6E) — same family, and two corrections it forces
 
-The **ECW336** is the same Senao `ap-hk07` board family and has now been
+The **ECW336** shares this generation's SoC and has now been
 UART-brought-up and stock-flashed on three units
 ([ECW336-firmware-tools](https://github.com/ParkWardRR/ECW336-firmware-tools)).
 No OpenWrt port exists for it yet, but two of its findings bear directly on the
@@ -70,17 +70,36 @@ notes above.
 ### 1. A FIT's default configuration does **not** identify the board
 
 The ECW230v3 note above reads `config@hk08` as a hardware difference. Treat that
-as unsafe: the ECW336's FIT **also** defaults to `config@hk08`, yet a live
-ECW336 reports `machid=8010006` (`ap-hk07`), with `soc_version_major=2`,
-`soc_version_minor=0`. More tellingly, a **known-`ap-hk07`** EWS377-FIT 1.1.65
+as unsafe: the ECW336's FIT **also** defaults to `config@hk08`, yet that matches
+neither its board nor the DTB it boots — a live ECW336 reports
+`machid=8010006` with `soc_version_major=2`, and u-boot's own CDT line decodes
+it as `Platform 8 / Major 1 / Minor 0 / Subtype 6`, i.e. the **`hk01.c6`**
+(AP-HK01-C6) DTB, which is also what userspace prints. More tellingly, a
+**known-`ap-hk07`** EWS377-FIT 1.1.65
 image defaults to `config@hk01.c4`.
 
 So `configurations/default` is a QSDK **build artifact** — whatever the vendor's
 build happened to select — not a statement about silicon. Userspace is no better:
 the ECW336 prints `Platform Name: ap-hk01-c6` while its kernel reports `AP-HK07`.
 
-**Trust `machid` and the DTB's `qcom,msm-id`/`board-id`, nothing else.** For
-reference, hk07 is `0x156 0x185`; hk08/hk06 are `0x158 0x188`.
+**Read `machid` on the unit — but know exactly what it tells you.** For
+reference, hk07 is SoC id pair `0x156 0x185`; hk08/hk06 are `0x158 0x188`.
+
+**`machid` is a DTB selector, not a product ID.** Note the `machid=8010006`
+already recorded for the observed **EWS377-FIT** above — the ECW336 reports the
+*same* value, differing only in `hw_id` (`0101012B` on that FIT unit vs
+`01010123` on the ECW336). Senao evidently programs one CDT across its IPQ807x
+line, so:
+
+| question | field to use |
+|---|---|
+| which DTB will u-boot select? | `machid` |
+| which product is this? | `hw_id`, plus `product_id` in the image header |
+| what peripherals exist? | inspect the unit (PCIe radios, ethernet PHYs) |
+
+So an EWS377-FIT and a tri-band 6E ECW336 land on the same reference DTB while
+being obviously different products — do not infer hardware capability from
+`machid` alone.
 
 ### 2. Partition labels: read them per unit, but they are not always reversed
 
