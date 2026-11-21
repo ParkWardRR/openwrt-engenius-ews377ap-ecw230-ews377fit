@@ -70,12 +70,15 @@ notes above.
 ### 1. A FIT's default configuration does **not** identify the board
 
 The ECW230v3 note above reads `config@hk08` as a hardware difference. Treat that
-as unsafe: the ECW336's FIT **also** defaults to `config@hk08`, yet that matches
-neither its board nor the DTB it boots — a live ECW336 reports
-`machid=8010006` with `soc_version_major=2`, and u-boot's own CDT line decodes
-it as `Platform 8 / Major 1 / Minor 0 / Subtype 6`, i.e. the **`hk01.c6`**
-(AP-HK01-C6) DTB, which is also what userspace prints. More tellingly, a
-**known-`ap-hk07`** EWS377-FIT 1.1.65
+as unsafe: the ECW336's FIT **also** defaults to `config@hk08`, which matches
+neither its board nor the DTB it boots. Worse, the DTB it *does* boot sits in
+the slot named **`hk07`** and even carries `model = "…IPQ8074/AP-HK07"`, yet
+declares `compatible = qcom,ipq8074-ap-hk01-c6, qcom,ipq8074-hk01` — the board
+is **AP-HK01-C6**, host plus a Pine (QCN9074) 6 GHz card. Senao writes its own
+board content into a generic QSDK slot, so **slot names and `model` strings are
+labels, not identities**; only `compatible` is authoritative (it is what
+OpenWrt's `board_detect` uses). More tellingly, a **known-`ap-hk07`**
+EWS377-FIT 1.1.65
 image defaults to `config@hk01.c4`.
 
 So `configurations/default` is a QSDK **build artifact** — whatever the vendor's
@@ -93,13 +96,18 @@ line, so:
 
 | question | field to use |
 |---|---|
-| which DTB will u-boot select? | `machid` |
+| which config **slot** will u-boot select? | `machid` |
+| which **board** is in that slot? | the DTB's **`compatible`** — never its `model` or the slot name |
 | which product is this? | `hw_id`, plus `product_id` in the image header |
 | what peripherals exist? | inspect the unit (PCIe radios, ethernet PHYs) |
 
-So an EWS377-FIT and a tri-band 6E ECW336 land on the same reference DTB while
-being obviously different products — do not infer hardware capability from
-`machid` alone.
+So an EWS377-FIT and a tri-band 6E ECW336 select the **same slot name** while
+being obviously different products, because each vendor's firmware puts its own
+board content in that slot. Never infer hardware from `machid` or a slot name
+alone — and note the ECW336's DTB differs from the EWS377's `hk07` one in ~670
+of 3347 lines (ethernet `dp4`+`dp5` vs `dp5`+`dp6`, Aquantia 10G PHY
+`ieee802.3-c45` refs the EWS377 lacks, `aqr_int`/`dc_det` GPIOs, `wlan_6g_led`),
+so the two board DTSs are **not** interchangeable even though the slot is.
 
 ### 2. Partition labels: read them per unit, but they are not always reversed
 
