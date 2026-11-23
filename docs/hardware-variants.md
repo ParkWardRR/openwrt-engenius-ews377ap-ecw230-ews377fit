@@ -61,11 +61,12 @@ If it does not boot, nothing is lost: stop at the u-boot prompt and restore your
 
 ## ECW336 (Wi-Fi 6E) — same family, and two corrections it forces
 
-The **ECW336** shares this generation's SoC and has now been
-UART-brought-up and stock-flashed on three units
+The **ECW336** shares this generation's SoC and has been UART-brought-up and
+stock-flashed on three units
 ([ECW336-firmware-tools](https://github.com/ParkWardRR/ECW336-firmware-tools)).
-No OpenWrt port exists for it yet, but two of its findings bear directly on the
-notes above.
+**An OpenWrt port for it now exists and runs on hardware** — see
+[what that took](#the-ecw336-port-works--what-it-took-and-what-it-says-about-ours)
+below — and two of its findings bear directly on the notes above.
 
 ### 1. A FIT's default configuration does **not** identify the board
 
@@ -133,12 +134,69 @@ Two things to carry into any port work here:
 - Each A/B slot has its **own `WIFIFW` partition**, so a wifi-firmware write has
   to target the inactive one too.
 
-### Hardware notes for a future port
+### The ECW336 port works — what it took, and what it says about ours
+
+Brought up on hardware 2026-11-20 in
+[openwrt-engenius-nss-edma](https://github.com/ParkWardRR/openwrt-engenius-nss-edma)
+(branch `engenius-ipq807x`; our own patch series is split out as
+[engenius-ap-openwrt](https://github.com/ParkWardRR/engenius-ap-openwrt)): all
+three radios up on the unit's own Senao calibration (`phy0` 5 GHz, `phy1`
+2.4 GHz, `phy2` 6 GHz/50 channels), the 5 GbE AQR114C port bridged and passing
+traffic, A/B proven from either slot, and **NSS offload active** — firmware
+`NSS.FW.12.5-210-HK.R`, `Wi-Fi: NSS offload active (wifili)`, ~879 Mbps on a
+200 MB fetch (line rate for the 1 Gbps the port negotiated), plus ECM
+acceleration of through traffic confirmed (57 % of frames forwarded without the
+host seeing them).
+
+**Read the release status carefully, because it concerns the APs in this repo.**
+`v0.4.0-engenius-ipq807x` ships images for all four boards built from one tree,
+but **only the ECW336 is hardware-verified**. The EWS377AP v3, EWS377-FIT and
+ECW230v3 images in that release have never been booted with the NSS runtime or
+kernel 6.18. Treat them as untested builds, not as a release for this hardware.
+
+Four traps from that port that apply to **any** board in that tree, including
+ours:
+
+- **Stale out-of-tree kmods corrupt `sk_buff`, and it looks exactly like an NSS
+  bug.** OpenWrt rebuilds the kernel without rebuilding already-built kmod
+  packages. Selecting `nss-tools` pulls in `kmod-sched-core`, which turns on
+  `CONFIG_NET_SCHED`, which inserts `__u16 tc_index` into `struct sk_buff` —
+  every later field shifts by 4 (`skb->tail` 184 in the new kernel vs 180 in a
+  stale `cfg80211.ko`). A stale kmod does not fail to load, it *corrupts*: the
+  ~4 GiB CE rx DMA map and the `wiphy_register` oops with
+  `skb->tail = 0xffff0000` were both this. This was the root cause of every
+  earlier "NSS breaks ath11k" symptom. After any kernel-config change, delete
+  the whole kernel build tree.
+- **Set `country` on every `wifi-device`.** `hostapd.uc`'s
+  `device_country_code()` loops all radios and keeps the **last** country it
+  finds; OpenWrt gives a 6 GHz radio `country '00'`, which then poisons
+  `country_code` for *all* phys and hostapd dies on `Invalid country_code '00'`.
+  The simultaneous ath11k `failed to process regulatory info -22` warnings are a
+  red herring. Also `wifi reload` skips radios whose config did not change — use
+  `wifi down; wifi up`.
+- **NSS firmware naming.** `qca-nss-drv` requests `qca-nss{0,1}.bin` while
+  `nss-firmware` installs `qca-nss{0,1}-retail.bin`, so the probe fails with
+  `-110` about 60 s in. `nss-tools` now symlinks both names.
+- **Load order matters.** `nss.init` must load `ath11k_ahb`/`ath11k_pci` itself,
+  after arming the data plane and writing `nss_offload`. An `AUTOLOAD` on the bus
+  drivers lets kmodloader bind the radios in host mode first.
+
+A new board in that tree needs **six** registrations, and three of them fail
+*silently* — the image builds and boots with a subsystem simply dead: the DTS +
+`Device/` recipe in `image/ipq807x.mk` (with the Senao header's
+`-p <product_id>`), `ipq-wifi-<dev>` board data, an `11-ath11k-caldata` case
+(missing ⇒ **no radios at all**: `failed to load board data file: -12`), a
+`board.d/02_network` case (missing ⇒ the default bridges the DSA master `eth0`
+instead of the `lan` port, so `lan` stays down and nothing passes), and a
+`platform.sh` sysupgrade case.
+
+### Hardware notes specific to the ECW336
 
 - Third radio is a **QCN9074 on PCIe** (`remoteproc1: QCN9000_PCI0 is
-  available`), in addition to the IPQ8074's on-chip radios — so a port needs the
-  QCN9074 firmware and PCIe wiring, which the EWS377AP v3 DTS has no equivalent
-  for.
+  available`), in addition to the IPQ8074's on-chip radios — so its port needs
+  QCN9074 firmware and PCIe wiring that the EWS377AP v3 DTS has no equivalent
+  for. Its caldata offset in `0:art` is **`0x26800`** (the internal pair are at
+  `0x1000`), and both radios report `board_id 0xff`.
 - Stock is OpenWrt **19.07**, kernel **5.4.213** — the newer-SDK generation, same
   as ECW230v3.
 - 6 GHz works on stock and is **not** exotic regulatory territory: a 6E client

@@ -66,6 +66,30 @@ All three share identical silicon, LEDs, reset GPIO, Wi-Fi board data, Ethernet 
 
 The **NETGEAR WAX218 v1** is the same `ap-hk07` reference board and is [officially supported by mainline OpenWrt](docs/wax218-equivalence.md).
 
+> **The ECW336 is not a fourth row in that table.** It runs the same IPQ8072A and
+> reports the same `machid`, the same DT `model` string and the same
+> `config@hk07` slot name — and is still a different board (`ap-hk01-c6`:
+> ethernet on `dp4`+`dp5`, an Aquantia 10G PHY, a QCN9074 6 GHz card). It has its
+> own working port in the build-tree repo; the images here will not run on it.
+> See [hardware-variants](docs/hardware-variants.md#ecw336-wi-fi-6e--same-family-and-two-corrections-it-forces).
+
+### Two release lines — check which one you are downloading
+
+Images for this hardware now exist in two places, and the version numbers do not
+order the way the dates do:
+
+| where | newest | tree | status for the three models above |
+|---|---|---|---|
+| **this repo's releases** | `v0.5.1` (Oct 2026) | the `ap-hk07` line this repo documents | EWS377AP v3 and EWS377-FIT **hardware-proven** |
+| [openwrt-engenius-nss-edma](https://github.com/ParkWardRR/openwrt-engenius-nss-edma/releases) | `v0.4.0` (Nov 2026) | newer: kernel 6.18 + the working NSS runtime, added for the ECW336 | **built but never booted** — untested candidates |
+
+`v0.4.0` there is *newer* than `v0.5.1` here despite the lower number, and its
+ap-hk07 images have never been run on real hardware — only the ECW336 in that
+release is verified. For a build that has been on an actual EWS377AP v3 or
+EWS377-FIT, take this repo's `v0.5.1`. If you test the newer tree, say so when
+you report results: that is exactly the gap [help wanted](#help-wanted) asks
+about.
+
 ## Downloads
 
 Firmware images + `SHA256SUMS`: **[Releases](https://github.com/ParkWardRR/ews377apv3-openwrt/releases)** — firmware `v0.5` (per-SKU images for all three models; EWS377-FIT hardware-tested), TUI `v0.3`.
