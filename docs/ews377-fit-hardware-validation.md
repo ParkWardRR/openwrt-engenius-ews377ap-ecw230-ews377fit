@@ -28,6 +28,34 @@ number, full MAC, cloud certificate) are intentionally omitted from this report.
 MTD map is identical to the documented one (`0:SBL1` … `0:ART@0xf80000`, `rootfs@0x1000000` 111 MiB,
 `0:WIFIFW@0x7f00000`, `rootfs_1@0x8800000`, `0:WIFIFW_1@0xf700000`).
 
+### The console header — and it is mirrored relative to the ECW336
+
+4 pads labelled **`V G T R`** with a silkscreen **arrow marking the `V` end**.
+Wire **`G`→GND, `T`→adapter RX, `R`→adapter TX**, leave **`V`** open — the unit
+is PoE-powered, so never drive `V`.
+
+**This is the reverse of the ECW336's header.** A harness moved from an ECW336
+to this board and left in the same physical orientation is wired backwards and
+the console is dead in *both* directions — confirmed 2026-11-23, where a full
+reboot cycle recorded `rx 1 B` against `tx 800 B` and the key-blast to reach the
+boot menu never arrived either. Flipping the connector end-for-end fixed it
+immediately. Find the `V` end from the arrow and count from there rather than
+from the connector's shape.
+
+Two checks that tell a mis-wired harness from a dead board in seconds:
+
+- **Byte rate is a physical bound.** 115200 8N1 carries at most ~11.5 KB/s. If
+  your tap reports `rx` near zero while `tx` climbs, the wiring is wrong; if it
+  reports *more* than ~11.5 KB/s, your capture tool is lying (a wedged recorder
+  replaying a stale buffer can fake a convincing boot loop).
+- **Prove both directions.** A climbing `rx` only shows the board's TX. Send a
+  bare CR and expect the firmware's login banner, or `IPQ807x# ` in u-boot,
+  before trusting that your TX lands.
+
+Note the EWS377AP v3 board additionally carries a second **`UART_BT`** header
+immediately beside its `J2 UART` — Bluetooth, not console. Check for a decoy
+before concluding a silent console means dead hardware.
+
 ### Getting to a u-boot prompt on this bootloader
 
 The "press any key" trick from the older unit does nothing here. After the DDR/NAND init the console prints a menu:
@@ -114,3 +142,54 @@ Known/benign: two `clk_disable_unused` call traces at ~2.4 s during boot; `psci:
    `nand read 0x48000000 0x1000000 0xe80000; cmp.b 0x44000000 0x48000000 0xe80000`.
 6. `active_fw` was already `0`, so no `saveenv` was needed (this leaves the env, and the MAC, untouched). `reset`.
 7. First boot: set a root password immediately; LAN defaults to DHCP client.
+
+## Verified: ECW230v3 1.8.118-12 onto **both** A/B slots (2026-11-23)
+
+Done on this unit after it had been running cross-flashed ECW230v3 1.8.114-1.
+The OEM GUI local-upgrade path is **permanently unusable** on a cross-flashed
+unit (`upload.cgi` returns an identical 400 for every field name, a junk file
+and even no file at all), so u-boot is the only route — see
+`engenius-field-guide/cross-flashing.md`.
+
+Partition table read from the device with **`smeminfo`**, not from notes. It
+matches the map above, and it is *not* the ECW336's — on an ECW336 `rootfs_1`
+is `0x87c0000`, here it is `0x8800000`:
+
+| Slot | rootfs | `0:WIFIFW` |
+|---|---|---|
+| 0 (FW1) | `0x1000000` + `0x6f00000` | `0x7f00000` + `0x900000` |
+| 1 (FW2) | `0x8800000` + `0x6f00000` | `0xf700000` + `0x900000` |
+
+Write lengths `0x26a0000` / `0x2a0000` came from **this build's** `flash.scr`
+(1.8.114-1 used `0x27a0000` for the rootfs — the length moves between builds).
+Load address `0x44000000`: DRAM is `0x40000000`+`0x20000000` and u-boot relocates
+to `0x4a900000` with its stack just below, so a 40 MB image at `0x44000000` ends
+at `0x466a0000`, clear of both. Confirm with `bdinfo` rather than assuming.
+
+Each slot was written **while the other was active** (`active_fw=1` live while
+slot 0 was written, and vice versa), so a bootable slot existed at every instant.
+Every image was crc32-checked in RAM *and* read back off NAND against the value
+the FIT itself declares:
+
+```
+rootfs   40 501 248 B   crc32 c6ec4258    slot0 OK   slot1 OK
+wififw    2 752 512 B   crc32 fc401bb9    slot0 OK   slot1 OK
+```
+
+Both slots then boot-tested — `Booting from NAND FW2` and `Booting from NAND
+FW1`, each attaching UBI with 887 good PEBs / 1 bad / **0 corrupted** and
+reporting `firmware_version 1.8.118.12`. One factory-bad block per slot
+(`0xd1c0000`, `0x3de0000`) sat outside the written ranges, which is why the raw
+read-back compared exactly; if a bad block falls inside the range, `nand write`
+and `nand read` both skip it and a byte comparison is no longer meaningful.
+
+`saveenv` ran twice, each time changing **one** field (`active_fw`) on an env
+verified complete first (`ethaddr`, `snextra`, `hw_id`, `bootcmd`, `bootdelay`
+all present) — and with `ipaddr`/`serverip` restored to their production values
+beforehand, so the persisted env differs from the original in that single field.
+`0:ART`, `cert` and `userconfig` were never touched.
+
+Gotcha: a freshly written slot boots with **factory-default config**, so the GUI
+reverts to `admin`/`admin` and any controller address you had set is gone. On a
+managed fleet set the controller address again (`force_ac`) before moving the
+unit off the provisioning segment, or it will not find the controller.
